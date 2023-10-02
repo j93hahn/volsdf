@@ -1,9 +1,8 @@
 import os
-from datetime import datetime
 from pyhocon import ConfigFactory
 import sys
 import torch
-from tqdm import tqdm
+from fabric.utils.event import get_event_storage
 
 import utils.general as utils
 import utils.plots as plt
@@ -26,8 +25,8 @@ class VolSDFTrainRunner():
             self.expname = self.expname + '_{0}'.format(scan_id)
 
         if kwargs['is_continue'] and kwargs['timestamp'] == 'latest':
-            if os.path.exists(os.path.join('../',kwargs['exps_folder_name'],self.expname)):
-                timestamps = os.listdir(os.path.join('../',kwargs['exps_folder_name'],self.expname))
+            if os.path.exists(os.path.join(kwargs['exps_folder_name'],self.expname)):
+                timestamps = os.listdir(os.path.join(kwargs['exps_folder_name'],self.expname))
                 if (len(timestamps)) == 0:
                     is_continue = False
                     timestamp = None
@@ -41,17 +40,15 @@ class VolSDFTrainRunner():
             timestamp = kwargs['timestamp']
             is_continue = kwargs['is_continue']
 
-        utils.mkdir_ifnotexists(os.path.join('../',self.exps_folder_name))
-        self.expdir = os.path.join('../', self.exps_folder_name, self.expname)
+        utils.mkdir_ifnotexists(self.exps_folder_name)
+        self.expdir = os.path.join(self.exps_folder_name, self.expname)
         utils.mkdir_ifnotexists(self.expdir)
-        self.timestamp = '{:%Y_%m_%d_%H_%M_%S}'.format(datetime.now())
-        utils.mkdir_ifnotexists(os.path.join(self.expdir, self.timestamp))
 
-        self.plots_dir = os.path.join(self.expdir, self.timestamp, 'plots')
+        self.plots_dir = os.path.join(self.expdir, 'plots')
         utils.mkdir_ifnotexists(self.plots_dir)
 
         # create checkpoints dirs
-        self.checkpoints_path = os.path.join(self.expdir, self.timestamp, 'checkpoints')
+        self.checkpoints_path = os.path.join(self.expdir, 'checkpoints')
         utils.mkdir_ifnotexists(self.checkpoints_path)
         self.model_params_subdir = "ModelParameters"
         self.optimizer_params_subdir = "OptimizerParameters"
@@ -61,7 +58,7 @@ class VolSDFTrainRunner():
         utils.mkdir_ifnotexists(os.path.join(self.checkpoints_path, self.optimizer_params_subdir))
         utils.mkdir_ifnotexists(os.path.join(self.checkpoints_path, self.scheduler_params_subdir))
 
-        os.system("""cp -r {0} "{1}" """.format(kwargs['conf'], os.path.join(self.expdir, self.timestamp, 'runconf.conf')))
+        os.system("""cp -r {0} "{1}" """.format(kwargs['conf'], os.path.join(self.expdir, 'runconf.conf')))
 
         if (not self.GPU_INDEX == 'ignore'):
             os.environ["CUDA_VISIBLE_DEVICES"] = '{0}'.format(self.GPU_INDEX)
@@ -159,8 +156,10 @@ class VolSDFTrainRunner():
 
     def run(self):
         print("training...")
+        metric = get_event_storage()
 
         for epoch in range(self.start_epoch, self.nepochs + 1):
+            current_epoch_psnr = []
 
             if epoch % self.checkpoint_freq == 0:
                 self.save_checkpoints(epoch)
@@ -177,7 +176,7 @@ class VolSDFTrainRunner():
 
                 split = utils.split_input(model_input, self.total_pixels, n_pixels=self.split_n_pixels)
                 res = []
-                for s in tqdm(split):
+                for s in split:
                     out = self.model(s)
                     d = {'rgb_values': out['rgb_values'].detach(),
                          'normal_map': out['normal_map'].detach()}
@@ -216,15 +215,17 @@ class VolSDFTrainRunner():
 
                 psnr = rend_util.get_psnr(model_outputs['rgb_values'],
                                           ground_truth['rgb'].cuda().reshape(-1,3))
-                print(
-                    '{0}_{1} [{2}] ({3}/{4}): loss = {5}, rgb_loss = {6}, eikonal_loss = {7}, psnr = {8}'
-                        .format(self.expname, self.timestamp, epoch, data_index, self.n_batches, loss.item(),
-                                loss_output['rgb_loss'].item(),
-                                loss_output['eikonal_loss'].item(),
-                                psnr.item()))
+                current_epoch_psnr.append(psnr.item())
 
                 self.train_dataset.change_sampling_idx(self.num_pixels)
                 self.scheduler.step()
+
+            current_epoch_psnr = torch.tensor(current_epoch_psnr).mean().item()
+            metric.put_scalars(psnr=current_epoch_psnr, rgb_loss=loss_output['rgb_loss'].item(),
+                               eikonal_loss=loss_output['eikonal_loss'].item(), loss=loss.item(),
+                               epoch=epoch)
+            metric.step()
+            print(f"epoch {epoch}: psnr = {current_epoch_psnr}")
 
         self.save_checkpoints(epoch)
 

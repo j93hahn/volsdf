@@ -5,6 +5,7 @@ import argparse
 import GPUtil
 
 from training.volsdf_train import VolSDFTrainRunner
+from fabric.utils.event import EventStorage
 
 if __name__ == '__main__':
 
@@ -47,4 +48,5 @@ if __name__ == '__main__':
                                     do_vis=not opt.cancel_vis
                                     )
 
-    trainrunner.run()
+    with EventStorage():
+        trainrunner.run()
