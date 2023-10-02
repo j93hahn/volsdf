@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 import utils.general as utils
 import utils.plots as plt
-from utils import rend_util
+import utils.rend_util as rend_util
 
 class VolSDFTrainRunner():
     def __init__(self,**kwargs):

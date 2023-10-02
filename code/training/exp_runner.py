@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append('../code')
+sys.path.append('/share/data/2pals/jjahn/volsdf/code')
 import argparse
 import GPUtil
 
