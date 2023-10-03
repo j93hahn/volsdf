@@ -91,6 +91,7 @@ class VolSDFTrainRunner():
                                                            )
 
         conf_model = self.conf.get_config('model')
+        conf_model['use_learned_alpha'] = kwargs['use_learned_alpha']
         self.model = utils.get_class(self.conf.get_string('train.model_class'))(conf=conf_model)
         if torch.cuda.is_available():
             self.model.cuda()
@@ -156,6 +157,7 @@ class VolSDFTrainRunner():
 
     def run(self):
         print("training...")
+        torch.autograd.set_detect_anomaly(True)
         metric = get_event_storage()
 
         for epoch in range(self.start_epoch, self.nepochs + 1):
@@ -164,7 +166,7 @@ class VolSDFTrainRunner():
             if epoch % self.checkpoint_freq == 0:
                 self.save_checkpoints(epoch)
 
-            if self.do_vis and epoch % self.plot_freq == 0:
+            if self.do_vis and epoch % self.plot_freq == 0 and epoch > 0:
                 self.model.eval()
 
                 self.train_dataset.change_sampling_idx(-1)
@@ -178,28 +180,33 @@ class VolSDFTrainRunner():
                 res = []
                 for s in split:
                     out = self.model(s)
-                    d = {'rgb_values': out['rgb_values'].detach(),
-                         'normal_map': out['normal_map'].detach()}
-                    res.append(d)
+                    res.append(
+                        {'rgb_values': out['rgb_values'].detach(),
+                        'normal_map': out['normal_map'].detach()}
+                    )
+                    utils.clear_cache([out])
 
                 batch_size = ground_truth['rgb'].shape[0]
                 model_outputs = utils.merge_output(res, self.total_pixels, batch_size)
                 plot_data = self.get_plot_data(model_outputs, model_input['pose'], ground_truth['rgb'])
+                utils.clear_cache([model_outputs, model_input, ground_truth, res, split, batch_size])
 
-                plt.plot(self.model.implicit_network,
-                         indices,
-                         plot_data,
-                         self.plots_dir,
-                         epoch,
-                         self.img_res,
-                         **self.plot_conf
-                         )
+                plt.plot(
+                    self.model.implicit_network,
+                    indices,
+                    plot_data,
+                    self.plots_dir,
+                    epoch,
+                    self.img_res,
+                    **self.plot_conf
+                )
 
+                utils.clear_cache([plot_data, indices])
                 self.model.train()
 
             self.train_dataset.change_sampling_idx(self.num_pixels)
 
-            for data_index, (indices, model_input, ground_truth) in enumerate(self.train_dataloader):
+            for _, (indices, model_input, ground_truth) in enumerate(self.train_dataloader):
                 model_input["intrinsics"] = model_input["intrinsics"].cuda()
                 model_input["uv"] = model_input["uv"].cuda()
                 model_input['pose'] = model_input['pose'].cuda()
@@ -209,21 +216,22 @@ class VolSDFTrainRunner():
 
                 loss = loss_output['loss']
 
+                utils.clear_cache([model_input])
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                utils.clear_cache([loss_output, loss])
 
                 psnr = rend_util.get_psnr(model_outputs['rgb_values'],
-                                          ground_truth['rgb'].cuda().reshape(-1,3))
-                current_epoch_psnr.append(psnr.item())
+                                          ground_truth['rgb'].cuda().reshape(-1,3)).item()
+                current_epoch_psnr.append(psnr)
+                utils.clear_cache([ground_truth, model_outputs, psnr])
 
                 self.train_dataset.change_sampling_idx(self.num_pixels)
                 self.scheduler.step()
 
             current_epoch_psnr = torch.tensor(current_epoch_psnr).mean().item()
-            metric.put_scalars(psnr=current_epoch_psnr, rgb_loss=loss_output['rgb_loss'].item(),
-                               eikonal_loss=loss_output['eikonal_loss'].item(), loss=loss.item(),
-                               epoch=epoch)
+            metric.put_scalars(psnr=current_epoch_psnr, epoch=epoch)
             metric.step()
             print(f"epoch {epoch}: psnr = {current_epoch_psnr}")
 
