@@ -1,6 +1,7 @@
 import os
 from glob import glob
 import torch
+import gc
 
 def mkdir_ifnotexists(directory):
     if not os.path.exists(directory):
@@ -52,3 +53,9 @@ def merge_output(res, total_pixels, batch_size):
 
 def concat_home_dir(path):
     return os.path.join(os.environ['HOME'],'data',path)
+
+def clear_cache(vars_to_delete: list):
+    for var in vars_to_delete:
+        del var
+    gc.collect()
+    torch.cuda.empty_cache()
