@@ -25,6 +25,8 @@ if __name__ == '__main__':
     parser.add_argument('--scan_id', type=int, default=-1, help='If set, taken to be the scan id.')
     parser.add_argument('--cancel_vis', default=False, action="store_true",
                         help='If set, cancel visualization in intermediate epochs.')
+    parser.add_argument('--use_learned_alpha', default=False, action="store_true",
+                        help='learn the alpha parameter in the Laplacian density separately from beta')
 
     opt = parser.parse_args()
 
@@ -45,7 +47,8 @@ if __name__ == '__main__':
                                     timestamp=opt.timestamp,
                                     checkpoint=opt.checkpoint,
                                     scan_id=opt.scan_id,
-                                    do_vis=not opt.cancel_vis
+                                    do_vis=not opt.cancel_vis,
+                                    use_learned_alpha=opt.use_learned_alpha
                                     )
 
     with EventStorage():

@@ -14,16 +14,19 @@ class Density(nn.Module):
 
 
 class LaplaceDensity(Density):  # alpha * Laplace(loc=0, scale=beta).cdf(-sdf)
-    def __init__(self, params_init={}, beta_min=0.0001):
+    def __init__(self, params_init={}, beta_min=0.0001, use_learned_alpha=False):
         super().__init__(params_init=params_init)
         self.beta_min = torch.tensor(beta_min).cuda()
+        self.use_learned_alpha = use_learned_alpha
 
     def density_func(self, sdf, beta=None):
         if beta is None:
             beta = self.get_beta()
 
-        alpha = 1 / beta
-        return alpha * (0.5 + 0.5 * sdf.sign() * torch.expm1(-sdf.abs() / beta))
+        if not self.use_learned_alpha:  # original formulation
+            alpha = 1 / beta
+            return alpha * (0.5 + 0.5 * sdf.sign() * torch.expm1(-sdf.abs() / beta))
+        return (0.5 + 0.5 * sdf.sign() * torch.expm1(-sdf.abs() / beta))
 
     def get_beta(self):
         beta = self.beta.abs() + self.beta_min

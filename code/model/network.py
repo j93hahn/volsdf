@@ -197,7 +197,13 @@ class VolSDFNetwork(nn.Module):
         self.implicit_network = ImplicitNetwork(self.feature_vector_size, 0.0 if self.white_bkgd else self.scene_bounding_sphere, **conf.get_config('implicit_network'))
         self.rendering_network = RenderingNetwork(self.feature_vector_size, **conf.get_config('rendering_network'))
 
-        self.density = LaplaceDensity(**conf.get_config('density'))
+        density_config = conf.get_config('density')
+        density_config['use_learned_alpha'] = conf.get_bool('use_learned_alpha', default=False)
+        self.density = LaplaceDensity(**density_config)
+
+        self.use_learned_alpha = conf.get_bool('use_learned_alpha', default=False)
+        if self.use_learned_alpha:
+            self.alpha = nn.Parameter(torch.tensor(2.3016).cuda())
         self.ray_sampler = ErrorBoundSampler(self.scene_bounding_sphere, **conf.get_config('ray_sampler'))
 
     def forward(self, input):
@@ -264,6 +270,8 @@ class VolSDFNetwork(nn.Module):
 
     def volume_rendering(self, z_vals, sdf):
         density_flat = self.density(sdf)
+        if self.use_learned_alpha:
+            density_flat *= torch.exp(self.alpha)
         density = density_flat.reshape(-1, z_vals.shape[1])  # (batch_size * num_pixels) x N_samples
 
         dists = z_vals[:, 1:] - z_vals[:, :-1]
